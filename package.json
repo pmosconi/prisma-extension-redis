@@ -1,18 +1,14 @@
 {
-  "name": "prisma-extension-redis",
-  "version": "3.0.0",
+  "name": "@actvalue/prisma-extension-redis",
+  "version": "3.0.1",
   "description": "Extensive Prisma extension designed for efficient caching and cache invalidation using Redis and Dragonfly Databases",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yxx4c/prisma-extension-redis.git"
+    "url": "https://github.com/pmosconi/prisma-extension-redis.git"
   },
-  "homepage": "https://github.com/yxx4c/prisma-extension-redis",
-  "bugs": "https://github.com/yxx4c/prisma-extension-redis/issues",
-  "author": {
-    "name": "caxxy",
-    "email": "mail.yxx4c+npm@gmail.com",
-    "url": "https://github.com/yxx4c"
-  },
+  "homepage": "https://github.com/pmosconi/prisma-extension-redis",
+  "bugs": "https://github.com/pmosconi/prisma-extension-redis/issues",
+  "author": "ActValue",
   "keywords": [
     "prisma",
     "extension",
