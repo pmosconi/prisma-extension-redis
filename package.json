@@ -1,14 +1,18 @@
 {
-  "name": "@actvalue/prisma-extension-redis",
-  "version": "3.0.1",
+  "name": "prisma-extension-redis",
+  "version": "3.0.0",
   "description": "Extensive Prisma extension designed for efficient caching and cache invalidation using Redis and Dragonfly Databases",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pmosconi/prisma-extension-redis.git"
+    "url": "https://github.com/yxx4c/prisma-extension-redis.git"
   },
-  "homepage": "https://github.com/pmosconi/prisma-extension-redis",
-  "bugs": "https://github.com/pmosconi/prisma-extension-redis/issues",
-  "author": "ActValue",
+  "homepage": "https://github.com/yxx4c/prisma-extension-redis",
+  "bugs": "https://github.com/yxx4c/prisma-extension-redis/issues",
+  "author": {
+    "name": "caxxy",
+    "email": "mail.yxx4c+npm@gmail.com",
+    "url": "https://github.com/yxx4c"
+  },
   "keywords": [
     "prisma",
     "extension",
@@ -34,7 +38,11 @@
   "typesVersions": {
     "*": {}
   },
-  "files": ["dist/**/*", "LICENSE", "README.md"],
+  "files": [
+    "dist/**/*",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup",
     "biome": "biome",
@@ -46,7 +54,7 @@
     "compile": "tsc",
     "fix": "biome format --fix",
     "prepare": "bun run compile",
-    "pretest": "bunx prisma migrate dev --schema ./test/prisma/schema.prisma",
+    "pretest": "docker compose -f test/compose.yaml up -d && bunx prisma@5 migrate dev --schema ./test/prisma/schema.prisma",
     "posttest": "bun run lint",
     "release": "semantic-release"
   },
@@ -64,12 +72,15 @@
     "access": "public"
   },
   "release": {
-    "branches": ["main", "next", "beta"]
+    "branches": [
+      "main",
+      "next",
+      "beta"
+    ]
   },
   "dependencies": {
     "@prisma/client": "^5.18.0",
     "iovalkey": "^0.2.1",
-    "lodash-es": "^4.17.21",
     "micromatch": "^4.0.7",
     "object-code": "^1.3.3",
     "promise-coalesce": "^1.1.2"
