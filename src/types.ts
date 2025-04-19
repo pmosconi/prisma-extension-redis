@@ -6,7 +6,7 @@ import type {
 } from '@prisma/client/runtime/library';
 import type {Redis, RedisOptions} from 'iovalkey';
 
-import type {CacheCase} from './keyCases';
+import type {CacheCase} from './cacheKey';
 
 export const ALL_OPERATIONS = [
   '$executeRaw',
