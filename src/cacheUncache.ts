@@ -2,17 +2,17 @@ import micromatch from 'micromatch';
 import {coalesceAsync} from 'promise-coalesce';
 
 import type {Operation} from '@prisma/client/runtime/library';
+import type Redis from 'iovalkey';
 
 import {
   AUTO_OPERATIONS,
   type ActionCheckParams,
   type ActionParams,
   CACHE_OPERATIONS,
-  type CacheContext,
   type CacheOptions,
+  type CacheType,
   type DeletePatterns,
   type GetDataParams,
-  type RedisCacheCommands,
   UNCACHE_OPERATIONS,
   type UncacheOptions,
   type autoOperations,
@@ -42,29 +42,39 @@ export const unlinkPatterns = ({patterns, redis}: DeletePatterns) =>
       }),
   );
 
-const commands: RedisCacheCommands = {
-  JSON: {
-    get: (redis, key) => redis.multi().call('JSON.GET', key).exec(),
+export const setCache = async (
+  type: CacheType,
+  key: string,
+  value: string,
+  ttl: number | undefined,
+  redis: Redis,
+) => {
+  switch (type) {
+    case 'JSON': {
+      if (ttl && ttl !== Number.POSITIVE_INFINITY)
+        return redis
+          .multi()
+          .call('JSON.SET', key, '$', value)
+          .call('EXPIRE', key, ttl)
+          .exec();
+      return redis.multi().call('JSON.SET', key, '$', value).exec();
+    }
 
-    set: (redis, key, value, ttl) => {
-      const multi = redis.multi().call('JSON.SET', key, '$', value);
-      if (ttl && ttl !== Number.POSITIVE_INFINITY) {
-        multi.call('EXPIRE', key, ttl);
-      }
-      return multi.exec();
-    },
-  },
-  STRING: {
-    get: (redis, key) => redis.multi().call('GET', key).exec(),
+    case 'STRING': {
+      if (ttl && ttl !== Number.POSITIVE_INFINITY)
+        return redis
+          .multi()
+          .call('SET', key, value)
+          .call('EXPIRE', key, ttl)
+          .exec();
+      return await redis.multi().call('SET', key, value).exec();
+    }
 
-    set: (redis, key, value, ttl) => {
-      const multi = redis.multi().call('SET', key, value);
-      if (ttl && ttl !== Number.POSITIVE_INFINITY) {
-        multi.call('EXPIRE', key, ttl);
-      }
-      return multi.exec();
-    },
-  },
+    default:
+      throw new Error(
+        'Incorrect CacheType provided! Supported values: JSON | STRING',
+      );
+  }
 };
 
 export const getCache = async ({
@@ -78,75 +88,87 @@ export const getCache = async ({
 }: GetDataParams) => {
   const {onError, onHit, onMiss, transformer, type} = config;
 
-  if (!commands[type])
-    throw new Error(
-      'Incorrect CacheType provided! Supported values: JSON | STRING',
-    );
+  try {
+    let cache: [error: Error | null, result: unknown][] | null = null;
 
-  const command = commands[type];
+    switch (type) {
+      case 'JSON': {
+        cache = await redis.multi().call('JSON.GET', key).exec();
+        break;
+      }
 
-  const [[error, cached]] = (await command.get(redis, key)) ?? [];
+      case 'STRING': {
+        cache = await redis.multi().call('GET', key).exec();
+        break;
+      }
 
-  if (onError && error) onError(error);
-
-  const timestamp = Date.now() / 1000;
-
-  const args = {
-    ...xArgs,
-  };
-
-  args.cache = undefined;
-
-  if (cached) {
-    if (onHit) onHit(key);
-    const cacheContext: CacheContext = (transformer?.deserialize || JSON.parse)(
-      cached as string,
-    );
-
-    const {
-      isCached,
-      result,
-      stale: cacheStale,
-      timestamp: cacheTime,
-      ttl: cacheTtl,
-    } = cacheContext;
-
-    if (timestamp < cacheTime + cacheTtl) return {result, isCached};
-
-    if (timestamp <= cacheTime + cacheStale)
-      query(args).then(result => {
-        const cacheContext = {
-          isCached: true,
-          key,
-          result,
-          stale,
-          timestamp,
-          ttl,
-        };
-        command.set(
-          redis,
-          key,
-          (transformer?.serialize || JSON.stringify)(cacheContext),
-          ttl + stale,
+      default:
+        throw new Error(
+          'Incorrect CacheType provided! Supported values: JSON | STRING',
         );
-      });
+    }
 
-    return {result, isCached};
+    const [[error, cached]] = cache ?? [];
+
+    if (onError && error) onError(error);
+
+    const timestamp = Date.now();
+
+    const args = {
+      ...xArgs,
+    };
+
+    args.cache = undefined;
+
+    if (cached) {
+      if (onHit) onHit(key);
+      const cacheContext = (transformer?.deserialize || JSON.parse)(
+        cached as string,
+      );
+
+      const {result, ttl: cacheTtl, stale: cacheStale} = cacheContext;
+
+      if (timestamp < cacheTtl) return result;
+
+      if (timestamp <= cacheStale) {
+        query(args).then(result => {
+          const cacheContext = {
+            result,
+            isCached: true,
+            key,
+            ttl: ttl * 1000 + timestamp,
+            stale: (ttl + stale) * 1000 + timestamp,
+          };
+
+          const value = (transformer?.serialize || JSON.stringify)(
+            cacheContext,
+          );
+
+          setCache(type, key, value, ttl + stale, redis);
+        });
+        return result;
+      }
+    } else if (onMiss) onMiss(key);
+
+    const result = await query(args);
+
+    const cacheContext = {
+      result,
+      isCached: true,
+      key,
+      ttl: ttl * 1000 + timestamp,
+      stale: (ttl + stale) * 1000 + timestamp,
+    };
+
+    const value = (transformer?.serialize || JSON.stringify)(cacheContext);
+
+    setCache(type, key, value, ttl + stale, redis);
+
+    return result;
+  } catch (error) {
+    if (onError) onError(error);
+    else throw error;
   }
-
-  if (!cached && onMiss) onMiss(key);
-
-  const result = await query(args);
-
-  const cacheContext = {isCached: true, key, result, stale, timestamp, ttl};
-  command.set(
-    redis,
-    key,
-    (transformer?.serialize || JSON.stringify)(cacheContext),
-    ttl + stale,
-  );
-
-  return {result, isCached: false};
 };
 
 export const promiseCoalesceGetCache = ({key, ...rest}: GetDataParams) =>
@@ -198,8 +220,8 @@ export const customCacheAction = async ({
     stale: customStale,
   } = args.cache as unknown as CacheOptions;
 
-  const ttl = customTtl ?? config.ttl;
-  const stale = customStale ?? config.stale;
+  const stale = customStale ?? config.stale ?? 0;
+  const ttl = customTtl ?? config.ttl ?? Number.POSITIVE_INFINITY;
 
   return await promiseCoalesceGetCache({
     ttl,
@@ -217,24 +239,32 @@ export const customUncacheAction = async ({
   options: {args, query},
   config,
 }: ActionParams) => {
-  const {uncacheKeys, hasPattern} = args.uncache as unknown as UncacheOptions;
+  const {onError} = config;
 
-  if (hasPattern) {
-    const patternKeys = micromatch(uncacheKeys, ['*\\**', '*\\?*']);
-    const plainKeys = micromatch(uncacheKeys, ['*', '!*\\**', '!*\\?*']);
+  try {
+    const {uncacheKeys, hasPattern} = args.uncache as unknown as UncacheOptions;
 
-    const unlinkPromises = [
-      ...unlinkPatterns({
-        redis,
-        patterns: patternKeys,
-      }),
-      ...(plainKeys.length ? [redis.unlink(plainKeys)] : []),
-    ];
+    if (hasPattern) {
+      const patternKeys = micromatch(uncacheKeys, ['*\\**', '*\\?*']);
+      const plainKeys = micromatch(uncacheKeys, ['*', '!*\\**', '!*\\?*']);
 
-    await Promise.all(unlinkPromises);
-  } else await redis.unlink(uncacheKeys);
+      const unlinkPromises = [
+        ...unlinkPatterns({
+          redis,
+          patterns: patternKeys,
+        }),
+        ...(plainKeys.length ? [redis.unlink(plainKeys)] : []),
+      ];
 
-  return {result: await query({...args, uncache: undefined})};
+      await Promise.all(unlinkPromises);
+    } else {
+      await redis.unlink(uncacheKeys);
+    }
+  } catch (error) {
+    if (onError) onError(error);
+  }
+
+  return query({...args, uncache: undefined});
 };
 
 export const isAutoCacheEnabled = ({
@@ -245,20 +275,19 @@ export const isAutoCacheEnabled = ({
 
   if (xArgs.cache !== undefined && typeof xArgs.cache === 'boolean')
     return xArgs.cache;
-
-  if (typeof auto === 'object')
-    return (
-      filterOperations(...AUTO_OPERATIONS)(auto.excludedOperations).includes(
-        operation as autoOperations,
-      ) &&
-      !auto.excludedModels?.includes(model) &&
-      !auto.models
-        ?.find(m => m.model === model)
-        ?.excludedOperations?.includes(operation as autoOperations)
-    );
-
-  if (auto) return AUTO_OPERATIONS.includes(operation as autoOperations);
-
+  if (auto) {
+    if (typeof auto === 'object')
+      return (
+        filterOperations(...AUTO_OPERATIONS)(auto.excludedOperations).includes(
+          operation as autoOperations,
+        ) &&
+        !auto.excludedModels?.includes(model) &&
+        !auto.models
+          ?.find(m => m.model === model)
+          ?.excludedOperations?.includes(operation as autoOperations)
+      );
+    return true;
+  }
   return false;
 };
 

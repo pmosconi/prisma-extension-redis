@@ -1,10 +1,10 @@
+import { caseMap, CacheCase } from './keyCases';
 import type {
   CacheAutoKeyParams,
   CacheKeyParams,
   CacheKeyPatternParams,
 } from './types';
 import {hash} from 'object-code';
-import {CacheCase, caseMap} from './keyCases';
 
 const globCheckRegex = /[*?]/;
 
